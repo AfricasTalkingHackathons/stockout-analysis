@@ -225,6 +225,23 @@ def test_demo_allowlist_keeps_live_sms_safe(monkeypatch):
                                           "demo_sms_allowlist": "+254712000001"})
     assert isinstance(provider_for(s, "+254799000000"), SimulatedProvider)
     assert isinstance(provider_for(s, "+254712000001"), AfricasTalkingProvider)
+    assert isinstance(provider_for(s, "+254799000000", force_live=True), AfricasTalkingProvider)
+
+
+def test_africastalking_sends_sender_id():
+    seen = {}
+
+    def handler(request: httpx.Request):
+        seen["body"] = request.content.decode()
+        return httpx.Response(201, json={"SMSMessageData": {"Message": "Sent to 1/1", "Recipients": [
+            {"statusCode": 101, "number": "+254712000999", "status": "Success", "messageId": "ATXid_from"}]}})
+
+    s = get_settings().model_copy(update={"at_username": "example", "at_api_key": "k", "at_environment": "live",
+                                          "at_sender_id": "SENDER"})
+    provider = AfricasTalkingProvider(s, client=httpx.Client(transport=httpx.MockTransport(handler)))
+    res = provider.send("+254712000999", "hi")
+    assert res.accepted and "from=SENDER" in seen["body"]
+    assert provider.base == "https://api.africastalking.com"
 
 
 def test_test_sms_endpoint_and_history(client, admin_h):

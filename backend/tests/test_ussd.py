@@ -41,7 +41,7 @@ def test_find_medicine_flow_with_sms(client, db):
     end = ussd(client, "s2", f"1*{n}*amoxicillin*1*1")
     assert end.startswith("END SMS summary requested") and "Simulated" in end
     db.expire_all()
-    sms = db.query(NotificationDelivery).filter_by(purpose="search_result").all()
+    sms = db.query(NotificationDelivery).filter_by(purpose="ussd_search_result").all()
     assert len(sms) == 1 and "[DEMO]" in sms[0].message
 
 
@@ -55,7 +55,7 @@ def test_repeated_request_is_idempotent(client, db):
     b = ussd(client, "s3", path)  # provider retry
     assert a == b
     db.expire_all()
-    assert db.query(NotificationDelivery).filter_by(purpose="search_result").count() == 1
+    assert db.query(NotificationDelivery).filter_by(purpose="ussd_search_result").count() == 1
 
 
 def test_invalid_input_and_pagination(client):
@@ -91,6 +91,8 @@ def test_report_unavailable_flow(client, db):
     reports = db.query(StockReport).filter_by(source="ussd").all()
     assert len(reports) == 1 and reports[0].verification_status == "unverified"
     assert reports[0].reporter_hash and PHONE not in reports[0].reporter_hash
+    sms = db.query(NotificationDelivery).filter_by(purpose="ussd_report_confirm").all()
+    assert len(sms) == 1 and reports[0].reference in sms[0].message
 
 
 def test_cancel_report(client, db):
@@ -108,6 +110,8 @@ def test_subscribe_view_and_stop(client, db):
     assert ussd(client, "a1", f"3*1*amoxicillin*{n}*1").startswith("END Alert set")
     db.expire_all()
     assert db.query(NotificationSubscription).filter_by(phone=PHONE, is_active=True).count() == 1
+    confirm = db.query(NotificationDelivery).filter_by(purpose="ussd_subscribe_confirm").all()
+    assert len(confirm) == 1 and "Reply STOP" in confirm[0].message
     assert "Amoxicillin" in ussd(client, "a2", "3*2")
     assert ussd(client, "a3", "3*3").startswith("END All availability alerts stopped")
     db.expire_all()

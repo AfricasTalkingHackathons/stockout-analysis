@@ -278,6 +278,17 @@ class Flow:
     def _detail_result(self) -> dict | None:
         return next((r for r in self.results() if r["facility"]["id"] == self.c.state.get("facility")), None)
 
+    def _confirm_sms(self, phone: str, message: str, purpose: str, dedupe_key: str,
+                     facility_id: str | None = None) -> None:
+        queue_sms(self.db, phone, message, purpose=purpose, dedupe_key=dedupe_key,
+                  facility_id=facility_id, is_demo=self.c.simulated)
+
+    def _sms_end(self, body: str) -> None:
+        if self.c.simulated or not get_settings().at_configured:
+            self.c.end = body
+        else:
+            self.c.end = body.rstrip(".") + ". Check your SMS."
+
     def _sms_summary(self, is_last: bool) -> None:
         r = self._detail_result()
         phone = normalize_ke_phone(self.c.phone) or self.c.phone
@@ -288,12 +299,12 @@ class Flow:
         if is_last:
             demo = "[DEMO] " if f["is_demo"] else ""
             when = r["last_updated_at"].strftime("%d %b %H:%M UTC") if r["last_updated_at"] else "no recent report"
-            queue_sms(self.db, phone,
-                      f"StockOut Alert {demo}{m['generic_name']} {m['strength']} at {f['name']}, {f['town'] or ''} "
-                      f"{f['county']['name']}: {r['status_label']} (updated {when}). Tel {f['phone'] or 'n/a'}. "
-                      "Stock may change. Call before travelling.",
-                      purpose="search_result", dedupe_key=f"ussd:{self.c.session_id}:sms:{f['id']}:{m['id']}",
-                      facility_id=f["id"], is_demo=f["is_demo"])
+            self._confirm_sms(
+                phone,
+                f"StockOut Alert {demo}{m['generic_name']} {m['strength']} at {f['name']}, {f['town'] or ''} "
+                f"{f['county']['name']}: {r['status_label']} (updated {when}). Tel {f['phone'] or 'n/a'}. "
+                "Stock may change. Call before travelling.",
+                "ussd_search_result", f"ussd:{self.c.session_id}:sms:{f['id']}:{m['id']}", f["id"])
         self.c.end = "SMS summary requested. " + ("(Simulated SMS, demo)" if self.c.simulated or
                                                     not get_settings().at_configured else "It will arrive shortly.")
 
@@ -304,7 +315,14 @@ class Flow:
                                         reporter_hash=hash_identifier(self.c.phone),
                                         dedupe_key=f"ussd:{self.c.session_id}") if is_last else (None, False)
         ref = report.reference if report else "pending"
-        self.c.end = f"Report received. Ref {ref}. The facility will be asked to confirm. Thank you."
+        phone = normalize_ke_phone(self.c.phone)
+        if is_last and phone:
+            self._confirm_sms(
+                phone,
+                f"StockOut Alert: we received your unavailability report. Ref {ref}. "
+                "The facility will be asked to confirm.",
+                "ussd_report_confirm", f"ussd:{self.c.session_id}:report-sms")
+        self._sms_end(f"Report received. Ref {ref}. The facility will be asked to confirm. Thank you.")
 
     def _subscribe(self, is_last: bool) -> None:
         phone = normalize_ke_phone(self.c.phone)
@@ -320,7 +338,14 @@ class Flow:
                                                      consent_source="ussd"))
             elif not sub.is_active:
                 sub.is_active, sub.unsubscribed_at, sub.consent_at, sub.consent_source = True, None, utcnow(), "ussd"
-        self.c.end = "Alert set. We will SMS you when it is reported available. Reply STOP to any alert to opt out."
+            county_row = self.db.get(County, county)
+            area = county_row.name if county_row else "your county"
+            self._confirm_sms(
+                phone,
+                f"StockOut Alert: you subscribed to availability alerts for {area}. "
+                "We will text you when a participating facility reports it available. Reply STOP to opt out.",
+                "ussd_subscribe_confirm", f"ussd:{self.c.session_id}:sub-sms")
+        self._sms_end("Alert set. We will SMS you when it is reported available. Reply STOP to any alert to opt out.")
 
     def _my_alerts(self) -> None:
         phone = normalize_ke_phone(self.c.phone)
@@ -339,7 +364,11 @@ class Flow:
                 s.is_active, s.unsubscribed_at = False, utcnow()
             for s in self.db.query(PickupSchedule).filter_by(phone=phone, is_active=True):
                 s.is_active, s.unsubscribed_at = False, utcnow()
-        self.c.end = "All availability alerts stopped. Pickup reminders for this number were also stopped."
+            self._confirm_sms(
+                phone,
+                "StockOut Alert: availability alerts and pickup reminders for this number have been stopped.",
+                "ussd_stop_confirm", f"ussd:{self.c.session_id}:stop-sms")
+        self._sms_end("All availability alerts stopped. Pickup reminders for this number were also stopped.")
 
     def _save_pickup(self, is_last: bool) -> None:
         from datetime import timedelta
@@ -357,7 +386,12 @@ class Flow:
                 next_pickup_on=today_ke() + timedelta(days=days), interval_days=interval,
                 remind_days_before=min(3, interval - 1), preferred_facility=None, consent_source="ussd",
             )
-        self.c.end = "Pickup reminder saved. SMS will not name the medicine. Reply STOP to opt out."
+            self._confirm_sms(
+                phone,
+                "StockOut Alert: pickup reminder saved. We will text you before collection day. "
+                "The message will not name the medicine. Reply STOP to opt out.",
+                "ussd_pickup_confirm", f"ussd:{self.c.session_id}:pickup-sms")
+        self._sms_end("Pickup reminder saved. SMS will not name the medicine. Reply STOP to opt out.")
 
     # ------------------------------------------------------------------ rendering
     def render(self) -> str:

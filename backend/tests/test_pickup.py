@@ -119,8 +119,11 @@ def test_ussd_pickup_reminder_flow(client, db):
     assert end.startswith("END Pickup reminder saved")
     db.expire_all()
     assert db.query(PickupSchedule).filter_by(phone="+254712000111", is_active=True).count() == 1
+    sms = db.query(NotificationDelivery).filter_by(purpose="ussd_pickup_confirm").all()
+    assert len(sms) == 1 and "will not name the medicine" in sms[0].message
     ussd(client, "pk1", f"4*metformin*{n}*3*3*1")
     assert db.query(PickupSchedule).filter_by(phone="+254712000111").count() == 1
+    assert db.query(NotificationDelivery).filter_by(purpose="ussd_pickup_confirm").count() == 1
 
 
 def test_does_not_instruct_underdose(client, db):

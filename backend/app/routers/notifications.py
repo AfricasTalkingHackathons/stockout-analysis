@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_db, utcnow
@@ -9,7 +9,7 @@ from app.routers import PageQ, SizeQ, paginate
 from app.schemas import SubscriptionIn, TestSmsIn, UnsubscribeIn
 from app.serializers import delivery_dict, subscription_dict
 from app.services.audit import audit
-from app.services.notifications import attempt_delivery, queue_sms
+from app.services.notifications import attempt_delivery, dispatch_in_background, queue_sms
 
 router = APIRouter(prefix="/api/notifications", tags=["notifications"])
 
@@ -40,8 +40,10 @@ def history(status: str | None = Query(None, pattern="^(queued|simulated|accepte
 
 
 @router.post("/subscriptions", status_code=201, dependencies=[Depends(sensitive_limit("subscribe"))])
-def subscribe(body: SubscriptionIn, db: Session = Depends(get_db)):
-    if not db.get(Medicine, body.medicine_id) or not db.get(County, body.county_id):
+def subscribe(body: SubscriptionIn, background: BackgroundTasks, db: Session = Depends(get_db)):
+    medicine = db.get(Medicine, body.medicine_id)
+    county = db.get(County, body.county_id)
+    if not medicine or not county:
         raise HTTPException(404, "Medicine or county not found")
     sub = db.query(NotificationSubscription).filter_by(phone=body.phone, medicine_id=body.medicine_id,
                                                        county_id=body.county_id).one_or_none()
@@ -49,9 +51,16 @@ def subscribe(body: SubscriptionIn, db: Session = Depends(get_db)):
         sub = NotificationSubscription(phone=body.phone, medicine_id=body.medicine_id, county_id=body.county_id,
                                        consent_source="web")
         db.add(sub)
+        db.flush()
     else:
         sub.is_active, sub.unsubscribed_at, sub.consent_at, sub.consent_source = True, None, utcnow(), "web"
+    queue_sms(
+        db, body.phone,
+        f"StockOut Alert: you subscribed to availability alerts for {county.name}. "
+        "We will text you when a participating facility reports it available. Reply STOP to opt out.",
+        purpose="subscribe_confirm", dedupe_key=f"sub:{sub.id}:confirm")
     db.commit()
+    background.add_task(dispatch_in_background)
     return {**subscription_dict(sub),
             "message": "You will receive an SMS when a participating facility in this county reports this medicine "
                        "available. Reply STOP to any alert, or use the unsubscribe form, to opt out."}

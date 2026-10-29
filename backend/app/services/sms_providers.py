@@ -125,13 +125,27 @@ def set_provider_override(provider: SmsProvider | None) -> None:
     _override = provider
 
 
-def provider_for(settings: Settings, recipient: str) -> SmsProvider:
+# USSD/web confirmations to the person who just opted in. Live AT USSD callers receive these
+# even while DEMO_MODE is on (demo facilities would otherwise block every send).
+LIVE_CONFIRM_PURPOSES = {
+    "ussd_search_result",
+    "ussd_subscribe_confirm",
+    "ussd_pickup_confirm",
+    "ussd_report_confirm",
+    "ussd_stop_confirm",
+    "subscribe_confirm",
+}
+
+
+def provider_for(settings: Settings, recipient: str, *, force_live: bool = False) -> SmsProvider:
     if _override is not None:
         return _override
     if settings.sms_force_simulation:
         return SimulatedProvider("simulation forced")
     if not settings.at_configured:
         return SimulatedProvider("no credentials") if settings.demo_mode else UnconfiguredProvider()
+    if force_live:
+        return AfricasTalkingProvider(settings)
     if settings.demo_mode and recipient not in settings.demo_sms_allowlist_set:
         return SimulatedProvider("recipient not in DEMO_SMS_ALLOWLIST")
     return AfricasTalkingProvider(settings)

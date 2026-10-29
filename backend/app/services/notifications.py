@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.database import SessionLocal, utcnow
 from app.models import DeliveryStatus, NotificationDelivery
-from app.services.sms_providers import provider_for
+from app.services.sms_providers import LIVE_CONFIRM_PURPOSES, provider_for
 
 log = logging.getLogger("stockout.notify")
 
@@ -54,7 +54,9 @@ def queue_sms(
 
 def attempt_delivery(db: Session, d: NotificationDelivery) -> NotificationDelivery:
     settings = get_settings()
-    provider = provider_for(settings, d.recipient)
+    # Live USSD/web opt-in confirmations skip the demo allowlist. Simulated USSD still sets is_demo.
+    force_live = (not d.is_demo) and d.purpose in LIVE_CONFIRM_PURPOSES
+    provider = provider_for(settings, d.recipient, force_live=force_live)
     d.attempts += 1
     result = provider.send(d.recipient, d.message)
     d.provider = result.provider
