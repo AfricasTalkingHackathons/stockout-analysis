@@ -92,6 +92,7 @@ export default function SearchPage() {
       href: `/facilities/${r.facility.id}`,
     }))
   const countyName = counties.data?.find((c) => c.id === countyId)?.name
+  const subcountyName = locations.data?.find((l) => l.id === locationId)?.name
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8">
@@ -126,10 +127,10 @@ export default function SearchPage() {
               </Select>
             )}
           </Field>
-          <Field label="Town / area">
+          <Field label="Sub-county">
             {(id) => (
               <Select id={id} value={locationId ?? ''} disabled={!countyId} onChange={(e) => update({ location: e.target.value || null })}>
-                <option value="">{countyId ? 'All areas' : 'Choose a county first'}</option>
+                <option value="">{countyId ? 'All sub-counties' : 'Choose a county first'}</option>
                 {locations.data?.map((l) => (
                   <option key={l.id} value={l.id}>
                     {l.name}
@@ -166,8 +167,32 @@ export default function SearchPage() {
               <MapIcon className="h-4 w-4" aria-hidden /> {showMap ? 'Hide map' : 'Show map'}
             </Button>
           )}
-          <span className="text-xs text-slate-500">Optional. You can search by county and town instead.</span>
+          <span className="text-xs text-slate-500">Optional. You can search by county and sub-county instead.</span>
         </div>
+        {countyId && (locations.data?.length ?? 0) > 0 && (
+          <div className="mt-4 border-t border-slate-100 pt-4">
+            <p className="text-sm font-medium text-slate-700">Sub-counties in {countyName}</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button
+                type="button"
+                className={`rounded-full px-3 py-1 text-sm ${!locationId ? 'bg-brand-700 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
+                onClick={() => update({ location: null })}
+              >
+                All
+              </button>
+              {locations.data?.map((l) => (
+                <button
+                  key={l.id}
+                  type="button"
+                  className={`rounded-full px-3 py-1 text-sm ${locationId === l.id ? 'bg-brand-700 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
+                  onClick={() => update({ location: String(l.id) })}
+                >
+                  {l.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </Card>
 
       <div className="mt-6">
@@ -198,7 +223,7 @@ export default function SearchPage() {
               )}
               <h2 className="text-sm font-medium text-slate-600" aria-live="polite">
                 {known.length} facilit{known.length === 1 ? 'y' : 'ies'} with a report
-                {countyName ? ` in ${countyName}` : ''}
+                {countyName ? ` in ${subcountyName ? `${subcountyName}, ` : ''}${countyName}` : ''}
                 {medicine ? ` for ${medicine.display_name}` : ''}
               </h2>
               {known.map((r) => (
@@ -253,7 +278,7 @@ export default function SearchPage() {
               )}
               {results.length === 0 && (
                 <EmptyState title="No participating facilities match these filters">
-                  Try another town, facility type, or search all counties.
+                  Try another sub-county, facility type, or search all counties.
                 </EmptyState>
               )}
             </div>

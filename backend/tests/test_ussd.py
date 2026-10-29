@@ -1,7 +1,7 @@
 from datetime import timedelta
 
 from app.database import utcnow
-from app.models import NotificationDelivery, NotificationSubscription, StockReport, UssdSession
+from app.models import County, Location, NotificationDelivery, NotificationSubscription, StockReport, UssdSession
 
 PHONE = "+254712000111"
 
@@ -21,6 +21,21 @@ def _county_option(menu: str, name: str) -> str:
     raise AssertionError(f"{name} not in {menu}")
 
 
+def _path_to_named_item(client, session: str, start: str, name: str) -> str:
+    """Follow '9. More' on a paginated USSD list until `name` appears, then include its choice."""
+    text = start
+    menu = ussd(client, session, text)
+    for _ in range(25):
+        for line in menu.splitlines():
+            if name in line and line[0].isdigit():
+                return f"{text}*{line.split('.')[0]}"
+        if "9. More" not in menu:
+            raise AssertionError(f"{name} not in paginated list:\n{menu}")
+        text = f"{text}*9"
+        menu = ussd(client, session, text)
+    raise AssertionError(f"{name} not found after pagination")
+
+
 def test_main_menu_and_exit(client):
     first = ussd(client, "s1", "")
     assert first.startswith("CON ") and "1. Find medicine" in first
@@ -31,14 +46,16 @@ def test_main_menu_and_exit(client):
 def test_find_medicine_flow_with_sms(client, db):
     menu = ussd(client, "s2", "1")
     assert menu.startswith("CON Select county")
-    n = _county_option(menu, "Nairobi")
-    assert "Enter medicine" in ussd(client, "s2", f"1*{n}")
-    results = ussd(client, "s2", f"1*{n}*amoxicillin")
+    nairobi = _path_to_named_item(client, "s2", "1", "Nairobi")
+    sub = ussd(client, "s2", nairobi)
+    assert "Select sub-county" in sub and "All sub-counties" in sub
+    assert "Enter medicine" in ussd(client, "s2", f"{nairobi}*1")
+    results = ussd(client, "s2", f"{nairobi}*1*amoxicillin")
     assert results.startswith("CON Results") and "AVAIL" in results
-    detail = ussd(client, "s2", f"1*{n}*amoxicillin*1")
+    detail = ussd(client, "s2", f"{nairobi}*1*amoxicillin*1")
     assert "Updated" in detail and "1. SMS me this" in detail
     assert len(detail) <= 182
-    end = ussd(client, "s2", f"1*{n}*amoxicillin*1*1")
+    end = ussd(client, "s2", f"{nairobi}*1*amoxicillin*1*1")
     assert end.startswith("END SMS summary requested") and "Simulated" in end
     db.expire_all()
     sms = db.query(NotificationDelivery).filter_by(purpose="ussd_search_result").all()
@@ -46,10 +63,10 @@ def test_find_medicine_flow_with_sms(client, db):
 
 
 def test_repeated_request_is_idempotent(client, db):
-    menu = ussd(client, "s3", "1")
-    n = _county_option(menu, "Nairobi")
-    path = f"1*{n}*amoxicillin*1*1"
-    for p in ("1", f"1*{n}", f"1*{n}*amoxicillin", f"1*{n}*amoxicillin*1"):
+    ussd(client, "s3", "1")
+    nairobi = _path_to_named_item(client, "s3", "1", "Nairobi")
+    path = f"{nairobi}*1*amoxicillin*1*1"
+    for p in ("1", nairobi, f"{nairobi}*1", f"{nairobi}*1*amoxicillin", f"{nairobi}*1*amoxicillin*1"):
         ussd(client, "s3", p)
     a = ussd(client, "s3", path)
     b = ussd(client, "s3", path)  # provider retry
@@ -68,12 +85,31 @@ def test_invalid_input_and_pagination(client):
     assert "Invalid choice" in ussd(client, "s5", "1*abc")
 
 
+def test_find_lists_subcounties_for_chosen_county(client):
+    nairobi = _path_to_named_item(client, "sc1", "1", "Nairobi")
+    sub = ussd(client, "sc1", nairobi)
+    assert sub.startswith("CON Select sub-county")
+    assert "1. All sub-counties" in sub
+    assert any(name in sub for name in ("Westlands", "Kilimani", "Embakasi", "Kasarani", "Kibera", "Dagoretti"))
+    mombasa = _path_to_named_item(client, "sc2", "1", "Mombasa")
+    msub = ussd(client, "sc2", mombasa)
+    assert "Select sub-county" in msub
+    assert any(name in msub for name in ("Nyali", "Likoni", "Changamwe", "Mvita", "Kisauni"))
+
+
+def test_every_county_has_subcounties(db):
+    counties = db.query(County).all()
+    assert len(counties) == 47
+    missing = [c.name for c in counties if db.query(Location).filter_by(county_id=c.id).count() == 0]
+    assert missing == []
+
+
 def test_unknown_session_with_path_replays(client):
     menu = ussd(client, "fresh-session", "1")
     assert "Select county" in menu
-    n = _county_option(menu, "Nairobi")
+    nairobi = _path_to_named_item(client, "fresh-session", "1", "Nairobi")
     # A brand-new session id arriving mid-flow (e.g. after a restart) still resolves correctly
-    assert "Results" in ussd(client, "never-seen", f"1*{n}*amoxicillin")
+    assert "Results" in ussd(client, "never-seen", f"{nairobi}*1*amoxicillin")
 
 
 def test_report_unavailable_flow(client, db):

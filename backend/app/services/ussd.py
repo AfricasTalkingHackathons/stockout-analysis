@@ -23,6 +23,7 @@ from app.models import (
     County,
     Facility,
     FacilityStatus,
+    Location,
     Medicine,
     NotificationSubscription,
     PickupSchedule,
@@ -75,16 +76,15 @@ class Flow:
         self.db = ctx.db
 
     # ------------------------------------------------------------------ list helpers
-    def counties(self) -> list[tuple[int, str]]:
-        rows = (
-            self.db.query(County)
-            .join(Facility, Facility.county_id == County.id)
-            .filter(Facility.status == FacilityStatus.APPROVED)
-            .distinct()
-            .order_by(County.name)
-            .all()
-        )
-        return [(c.id, c.name) for c in rows]
+    def counties(self, participating_only: bool = True) -> list[tuple[int, str]]:
+        q = self.db.query(County)
+        if participating_only:
+            q = (
+                q.join(Facility, Facility.county_id == County.id)
+                .filter(Facility.status == FacilityStatus.APPROVED)
+                .distinct()
+            )
+        return [(c.id, c.name) for c in q.order_by(County.name).all()]
 
     def medicines(self, q: str) -> list[tuple[str, str]]:
         return [(m.id, f"{m.generic_name} {m.strength}") for m in medicine_query(self.db, q).limit(16)]
@@ -98,15 +98,31 @@ class Flow:
         )
         return [(f.id, f.name) for f in rows]
 
+    def subcounties(self, county_id: int) -> list[tuple[int, str]]:
+        rows = (
+            self.db.query(Location)
+            .filter(Location.county_id == county_id)
+            .order_by(Location.name)
+            .all()
+        )
+        items: list[tuple[int, str]] = [(0, "All sub-counties")]
+        items.extend((loc.id, loc.name) for loc in rows)
+        return items
+
     def results(self) -> list[dict]:
         med = self.db.get(Medicine, self.c.state["med"])
-        return search_availability(self.db, [med], county_id=self.c.state["county"])
+        loc = self.c.state.get("location") or None
+        return search_availability(self.db, [med], county_id=self.c.state["county"], location_id=loc)
 
     def list_items(self) -> list[tuple]:
         s = self.c.state
         sc = s["screen"]
-        if sc in ("find_county", "rep_county", "sub_county", "pick_county"):
+        if sc == "find_county":
+            return self.counties(participating_only=False)
+        if sc in ("rep_county", "sub_county", "pick_county"):
             return self.counties()
+        if sc == "find_subcounty":
+            return self.subcounties(s["county"])
         if sc in ("find_med_select", "rep_med_select", "sub_med_select", "pick_med_select"):
             return self.medicines(s["q"])
         if sc == "rep_facility":
@@ -118,7 +134,7 @@ class Flow:
 
     # ------------------------------------------------------------------ transitions
     def go(self, screen: str, **kw) -> None:
-        keep = ("med", "county", "q", "facility", "flow", "pickup_in", "interval")
+        keep = ("med", "county", "location", "q", "facility", "flow", "pickup_in", "interval")
         self.c.state = {k: v for k, v in self.c.state.items() if k in keep}
         self.c.state.update(kw)
         self.c.state["screen"] = screen
@@ -239,13 +255,21 @@ class Flow:
         if sc.endswith("_county"):
             s["county"] = chosen
             if sc == "find_county":
-                self.go("find_med_entry")
+                has_areas = self.db.query(Location.id).filter(Location.county_id == chosen).first()
+                if has_areas:
+                    self.go("find_subcounty")
+                else:
+                    s["location"] = None
+                    self.go("find_med_entry")
             elif sc == "rep_county":
                 self.go("rep_facility")
             elif sc == "pick_county":
                 self.go("pick_when")
             else:
                 self.go("sub_confirm")
+        elif sc == "find_subcounty":
+            s["location"] = chosen or None
+            self.go("find_med_entry")
         elif sc.endswith("_med_select"):
             s["med"] = chosen
             self._after_medicine(prefix, is_last)
@@ -433,7 +457,7 @@ class Flow:
         else:
             items = self.list_items()
             titles = {"find_county": "Select county", "rep_county": "Select county", "sub_county": "Select county",
-                      "pick_county": "Select county",
+                      "pick_county": "Select county", "find_subcounty": "Select sub-county",
                       "find_med_select": "Select medicine", "rep_med_select": "Select medicine",
                       "sub_med_select": "Select medicine", "pick_med_select": "Select medicine",
                       "rep_facility": "Select facility",
