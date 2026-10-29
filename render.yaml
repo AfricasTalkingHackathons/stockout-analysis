@@ -1,0 +1,39 @@
+# Render blueprint (backend API + PostgreSQL). Not yet deployed — see README "Deployment".
+services:
+  - type: web
+    name: stockout-alert-api
+    runtime: docker
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /ready
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: stockout-alert-db
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
+      - key: AT_WEBHOOK_TOKEN
+        generateValue: true
+      - key: DEMO_MODE
+        value: "true"
+      - key: CORS_ORIGINS
+        sync: false
+      - key: AT_USERNAME
+        sync: false
+      - key: AT_API_KEY
+        sync: false
+      - key: AT_SENDER_ID
+        sync: false
+      - key: AT_ENVIRONMENT
+        value: sandbox
+      - key: AT_USSD_SERVICE_CODE
+        sync: false
+      - key: DEMO_SMS_ALLOWLIST
+        sync: false
+
+databases:
+  - name: stockout-alert-db
+    plan: free

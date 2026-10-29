@@ -1,0 +1,37 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --color-brand-50: #eefaf7;
+  --color-brand-100: #d5f2eb;
+  --color-brand-200: #ade4d7;
+  --color-brand-300: #78cfbe;
+  --color-brand-500: #1f9a88;
+  --color-brand-600: #12796c;
+  --color-brand-700: #0b5d57;
+  --color-brand-800: #0a4a46;
+  --color-brand-900: #08393a;
+  --color-ink: #10222b;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  @apply bg-slate-50 text-ink antialiased;
+}
+
+:focus-visible {
+  outline: 3px solid var(--color-brand-500);
+  outline-offset: 2px;
+}
+
+.leaflet-container {
+  font: inherit;
+  border-radius: 0.75rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
